@@ -1,0 +1,28 @@
+[project]
+name = "sofia-asistente"
+version = "0.1.0"
+description = "Control del ratón con la mano o la cabeza usando MediaPipe, para personas con poca movilidad en las manos."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "mediapipe>=0.10.14",
+  "opencv-python>=4.9",
+  "numpy",
+  "certifi",
+  "pynput; sys_platform != 'darwin'",
+  "pyobjc-framework-Quartz; sys_platform == 'darwin'",
+  "pyobjc-framework-ApplicationServices; sys_platform == 'darwin'",
+]
+
+[project.scripts]
+sofia = "sofia.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["sofia"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

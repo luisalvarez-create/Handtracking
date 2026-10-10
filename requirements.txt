@@ -1,0 +1,7 @@
+mediapipe>=0.10.14
+opencv-python>=4.9
+numpy
+certifi
+pynput; sys_platform != "darwin"
+pyobjc-framework-Quartz; sys_platform == "darwin"
+pyobjc-framework-ApplicationServices; sys_platform == "darwin"
