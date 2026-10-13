@@ -26,8 +26,10 @@ def play(sound: str, enabled: bool) -> None:
 
 
 class App:
-    def __init__(self, cfg: Config):
+    def __init__(self, cfg: Config, voice=None):
         self.cfg = cfg
+        self.voice = voice  # VoiceAssistant o None
+        self.pause_request: bool | None = None  # pedido por voz (otro hilo); se aplica en el bucle
         self.mouse = create_mouse()
         self.screen = self.mouse.screen_size()
         self.paused = False
@@ -73,6 +75,9 @@ class App:
             self.set_dwell(self.cfg.dwell_time - 0.2)
         return True
 
+    def request_pause(self, pause: bool) -> None:
+        self.pause_request = pause
+
     def set_dwell(self, value: float) -> None:
         self.cfg.dwell_time = round(min(3.0, max(0.4, value)), 1)
         self.controller.dwell.dwell_time = self.cfg.dwell_time
@@ -104,12 +109,19 @@ class App:
 
         print("Sofía lista. Teclas en la ventana de vista previa: p pausa · m modo · c centrar · +/- tiempo · q salir", flush=True)
         play("Tink", self.cfg.sounds)
+        if self.voice:
+            self.voice.actions.on_cursor = self.request_pause
+            self.voice.start()
         try:
             while True:
                 ok, frame = cap.read()
                 if not ok:
                     time.sleep(0.01)
                     continue
+                if self.pause_request is not None:
+                    if self.pause_request != self.paused:
+                        self.toggle_pause()
+                    self.pause_request = None
                 obs = self.tracker.process(frame)
                 actions, status = self.controller.update(obs, time.monotonic())
                 for action in actions:
@@ -121,13 +133,16 @@ class App:
                             play("Tink", self.cfg.sounds)
 
                 if self.cfg.show_preview:
-                    img = draw(frame, self.cfg, status, self.tracker.last_landmarks, self.screen, self.paused, self.tracker.kind)
+                    voice_state = self.voice.state if self.voice else ""
+                    img = draw(frame, self.cfg, status, self.tracker.last_landmarks, self.screen, self.paused, self.tracker.kind, voice_state)
                     cv2.imshow(WINDOW, img)
                     if not self.handle_key(cv2.waitKey(1) & 0xFF):
                         break
         except KeyboardInterrupt:
             pass
         finally:
+            if self.voice:
+                self.voice.stop()
             for action in self.controller.reset():
                 execute(self.mouse, action)
             cap.release()

@@ -58,6 +58,15 @@ class Config:
     show_preview: bool = True
     sounds: bool = True
 
+    # Asistente de voz (Gemini).
+    voice: bool = True
+    gemini_model: str = "gemini-3.5-flash-lite"
+    wake_words: list[str] = field(default_factory=lambda: ["sofía"])
+    wake_confidence: float = 0.6  # confianza mínima al reconocer "Sofía" (0–1)
+    followup_seconds: float = 8.0  # tiempo para contestar sin decir "Sofía" después de una pregunta
+    voice_name: str = ""  # voz de `say` (vacío = la primera de español de México)
+    mic_device: int | None = None  # micrófono (vacío = el predeterminado)
+
     @classmethod
     def load(cls, path: Path | None = None) -> "Config":
         path = path or config_dir() / "config.json"

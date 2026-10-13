@@ -12,7 +12,7 @@ HAND_CONNECTIONS = [
     (13, 17), (0, 17), (17, 18), (18, 19), (19, 20),
 ]
 # OpenCV no dibuja acentos con sus fuentes integradas.
-_ASCII = str.maketrans("áéíóúñÁÉÍÓÚÑü", "aeiounAEIOUNu")
+_ASCII = str.maketrans("áéíóúñÁÉÍÓÚÑü«»¿¡…", "aeiounAEIOUNu\"\"?!.")
 
 GREEN = (120, 220, 120)
 WHITE = (255, 255, 255)
@@ -26,7 +26,7 @@ def _text(img, text, org, scale=0.6, color=WHITE, thick=1):
     cv2.putText(img, text, org, cv2.FONT_HERSHEY_SIMPLEX, scale, color, thick, cv2.LINE_AA)
 
 
-def draw(frame, cfg: Config, status: Status, landmarks, screen: tuple[int, int], paused: bool, kind: str):
+def draw(frame, cfg: Config, status: Status, landmarks, screen: tuple[int, int], paused: bool, kind: str, voice_state: str = ""):
     img = cv2.flip(frame, 1)
     h, w = img.shape[:2]
 
@@ -73,5 +73,7 @@ def draw(frame, cfg: Config, status: Status, landmarks, screen: tuple[int, int],
         _text(img, status.message, (10, 55), 0.7, ORANGE, 2)
     if status.gesture:
         _text(img, status.gesture, (10, 90), 0.9, GREEN, 2)
+    if voice_state:
+        _text(img, f"Voz: {voice_state}", (10, h - 36), 0.55, WHITE if voice_state.startswith("Di ") else GREEN)
     _text(img, "p: pausa  m: modo  c: centrar  +/-: tiempo  q: salir", (10, h - 12), 0.45)
     return img

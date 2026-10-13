@@ -1,7 +1,7 @@
 [project]
 name = "sofia-asistente"
-version = "0.1.0"
-description = "Control del ratón con la mano o la cabeza usando MediaPipe, para personas con poca movilidad en las manos."
+version = "0.2.0"
+description = "Control del ratón con la mano o la cabeza (MediaPipe) y asistente de voz con Gemini, para personas con poca movilidad en las manos."
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
@@ -12,6 +12,9 @@ dependencies = [
   "pynput; sys_platform != 'darwin'",
   "pyobjc-framework-Quartz; sys_platform == 'darwin'",
   "pyobjc-framework-ApplicationServices; sys_platform == 'darwin'",
+  "google-genai>=1.50",
+  "vosk>=0.3.45",
+  "sounddevice>=0.4.6",
 ]
 
 [project.scripts]

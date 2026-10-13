@@ -16,13 +16,31 @@ if [ -z "$PY" ]; then
   exit 1
 fi
 
-if [ ! -x .venv/bin/python ]; then
-  echo "Primera vez: instalando dependencias (tarda unos minutos)…"
-  "$PY" -m venv .venv && .venv/bin/pip install --upgrade pip && .venv/bin/pip install -r requirements.txt
-  if [ $? -ne 0 ]; then
-    rm -rf .venv
-    read -r -p "La instalación falló. Presiona Enter para cerrar…"
+# Instala la primera vez, y de nuevo si requirements.txt cambió (por ejemplo, con una versión nueva de Sofía).
+REQ_HASH="$(shasum requirements.txt | cut -d' ' -f1)"
+if [ ! -x .venv/bin/python ] || [ "$(cat .venv/.requirements 2>/dev/null)" != "$REQ_HASH" ]; then
+  echo "Instalando dependencias (tarda unos minutos)…"
+  [ -x .venv/bin/python ] || "$PY" -m venv .venv
+  if .venv/bin/pip install --upgrade pip && .venv/bin/pip install -r requirements.txt; then
+    echo "$REQ_HASH" > .venv/.requirements
+  else
+    read -r -p "La instalación falló. Revisa el internet y presiona Enter para cerrar…"
     exit 1
+  fi
+fi
+
+# Asistente de voz: la primera vez pide la clave de Gemini (Enter para omitir).
+KEY_FILE="$HOME/Library/Application Support/Sofia/gemini_api_key"
+if [ -z "$GEMINI_API_KEY" ] && [ ! -s "$KEY_FILE" ] && [ ! -f "$KEY_FILE.omitida" ]; then
+  echo
+  echo "Para el asistente de voz «Sofía» se necesita una clave de Gemini."
+  echo "Créala gratis en https://aistudio.google.com/apikey"
+  if .venv/bin/python -m sofia --clave-gemini; then
+    :
+  else
+    mkdir -p "$(dirname "$KEY_FILE")" && touch "$KEY_FILE.omitida"
+    echo "Sin clave: Sofía funcionará solo con el cursor. Para agregarla después: borra el archivo"
+    echo "  \"$KEY_FILE.omitida\" y vuelve a abrir Sofía."
   fi
 fi
 
