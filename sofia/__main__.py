@@ -26,6 +26,8 @@ def parse_args(argv=None):
     voz.add_argument("--orden", metavar="TEXTO", help='probar una orden escrita, por ejemplo --orden "abre Chrome y busca hoteles"')
     voz.add_argument("--simular", action="store_true", help="con --orden: solo mostrar las acciones, sin hacerlas")
     voz.add_argument("--modelo-gemini", help="modelo de Gemini (predeterminado: gemini-3.5-flash-lite)")
+    voz.add_argument("--nombre", help='nombre de la asistente, por ejemplo Maki (se guarda)')
+    voz.add_argument("--activacion", metavar="FRASE", help='frase para activarla, por ejemplo "hola Maki" (se guarda; si no se da, se usa el nombre)')
     return p.parse_args(argv)
 
 
@@ -76,6 +78,12 @@ def main(argv=None) -> int:
         cfg.gemini_model = args.modelo_gemini
     if args.sin_voz:
         cfg.voice = False
+    if args.nombre or args.activacion:
+        if args.nombre:
+            cfg.assistant_name = " ".join(args.nombre.split())
+        cfg.wake_words = [" ".join((args.activacion or args.nombre).split())]
+        cfg.save()
+        print(f"Nombre: {cfg.assistant_name} · se activa diciendo «{cfg.wake_words[0]}»", flush=True)
 
     if args.clave_gemini:
         return ask_key()
@@ -85,30 +93,15 @@ def main(argv=None) -> int:
             return 1
         voice.command(text=args.orden)
         return 0
-    if args.solo_voz:
-        return run_voice_only(cfg)
-
-    from .app import App  # importa MediaPipe/OpenCV solo al ejecutar
-
-    voice = start_voice(cfg) if cfg.voice else None
-    return App(cfg, voice).run()
-
-
-def run_voice_only(cfg) -> int:
-    import time
-
-    voice = start_voice(cfg)
-    if voice is None:
+    voice = start_voice(cfg) if cfg.voice or args.solo_voz else None
+    if args.solo_voz and voice is None:
         return 1
-    voice.start()
-    print("Asistente de voz activo. Ctrl+C para salir.", flush=True)
-    try:
-        while voice.listener.is_alive():
-            time.sleep(0.5)
-    except KeyboardInterrupt:
-        pass
-    voice.stop()
-    return 0
+
+    from .app import Runner  # importa MediaPipe/OpenCV solo al ejecutar
+
+    if args.solo_voz:
+        print("Asistente de voz activo (sin cámara). Pídele que active el control con la mano cuando quieras. Ctrl+C para salir.", flush=True)
+    return Runner(cfg, voice, camera=not args.solo_voz).run()
 
 
 if __name__ == "__main__":

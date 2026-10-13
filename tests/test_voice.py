@@ -8,7 +8,7 @@ from google.genai import types
 from sofia import actions as act
 from sofia import assistant as asst
 from sofia.config import Config
-from sofia.listener import RATE, WakeLogic, trim
+from sofia.listener import RATE, WakeLogic, match_wake, phonetic, trim
 from sofia.voice import VoiceAssistant
 
 INSTALLED = ["Google Chrome", "Safari", "Microsoft Word", "Microsoft Excel", "Notes", "Calculator", "System Settings", "zoom.us"]
@@ -103,7 +103,10 @@ def test_actions_validate_before_acting():
     assert a.open_url("javascript:alert(1)")["ok"] is False
     assert a.press_keys("cmd+ñ")["ok"] is False
     assert a.set_volume("muy fuerte")["ok"] is False
-    assert a.cursor(True)["ok"] is False  # sin cámara activa
+    assert a.cursor("iniciar")["ok"] is False  # sin supervisor de cámara en esta sesión
+    assert a.cursor("volar")["ok"] is False
+    assert a.cursor("iniciar", "pies")["ok"] is False
+    assert a.rename("")["ok"] is False
     assert a.log == []
     assert a.open_app("Chrome") == {"ok": True, "app": "Google Chrome"}
     assert a.scroll("abajo", 100) == {"ok": True}
@@ -164,6 +167,82 @@ def test_ignores_conversation_noise_and_low_confidence():
     assert logic.decide(words("sofía abre chrome", conf=0.4), now=1).kind == "ignore"
     assert logic.decide([{"word": "[unk]", "conf": 0.9}], now=1).kind == "ignore"
     assert logic.decide([], now=1).kind == "ignore"
+
+
+# --- nombre y frase de activación configurables ("hi Maki") -----------------
+
+def test_phonetic():
+    assert phonetic("hi Maki") == phonetic("Jai Maki") == "jaimaki"
+    assert phonetic("jaime aquí") == "jaimeaki"  # así escucha "hi Maki" el modelo en español
+    assert phonetic("Sofía") == "sofia"
+    assert phonetic("quiero chocolate y llaves") == "kierochokolateiabes"
+
+
+def test_match_wake_by_sound():
+    assert match_wake(["jaime", "aquí", "abre", "crown"], "hi maki", 0.8)[0] == 2
+    assert match_wake(["maqui", "abre"], "maki", 0.8)[0] == 1
+    assert match_wake(["sofía", "abre"], "sofía", 0.8)[0] == 1
+    assert match_wake(["hay", "mami", "ya", "llegué"], "hi maki", 0.8) is None
+    assert match_wake(["hay", "muchos", "maquillajes"], "hi maki", 0.8) is None
+    assert match_wake(["abre", "chrome"], "sofía", 0.8) is None
+
+
+def test_wake_logic_with_hi_maki():
+    logic = WakeLogic(["hi maki"])
+    d = logic.decide(words("jaime aquí abre crown y busca hoteles"), now=1)
+    assert d.kind == "command" and d.hint == "abre crown y busca hoteles"
+    assert logic.decide(words("jaime aquí"), now=2).kind == "ack"
+    assert logic.decide(words("abre la calculadora"), now=3).kind == "command"
+    assert logic.decide(words("hay mami ya llegué"), now=20).kind == "ignore"
+    assert logic.decide(words("sofía abre chrome"), now=21).kind == "ignore"  # ya no se llama Sofía
+
+
+def test_hola_maki_is_the_default_and_ignores_similar_greetings():
+    cfg = Config()
+    assert cfg.assistant_name == "Maki" and cfg.wake_words == ["hola maki"]
+    logic = WakeLogic(cfg.wake_words)
+    # Así escucha el modelo en español "hola Maki":
+    assert logic.decide(words("hola maqui abre crown"), now=1).hint == "abre crown"
+    assert logic.decide(words("hola aquí abre la calculadora"), now=1).hint == "abre la calculadora"
+    for greeting in ["hola mami ya llegué", "hola mary cómo estás", "hola mati que haces", "hola cómo estás", "hola amiga buenos días"]:
+        assert logic.decide(words(greeting), now=1).kind == "ignore", greeting
+
+
+def test_rename_by_voice(monkeypatch):
+    saved = []
+    monkeypatch.setattr(Config, "save", lambda self, path=None: saved.append((self.assistant_name, list(self.wake_words))))
+    actions = act.Actions()
+    actions.speak = lambda text: None
+    client = FakeClient([call("cambiar_nombre", nombre="Maki", frase_activacion="hi Maki"), text("Listo, ahora me llamo Maki.")])
+    v = VoiceAssistant(Config(), actions, api_key="x", client=client)
+    v.command(text="a partir de hoy te llamas Maki y te despiertas con hi Maki")
+    assert saved == [("Maki", ["hi Maki"])]
+    assert v.logic.wake_words == ["hi Maki"] and v.idle_text() == 'Di "hi Maki"'
+    assert actions.name == "Maki"
+    client.responses.append(text("Hola."))
+    v.command(text="hola")
+    assert "Eres Maki" in client.requests[-1]["config"].system_instruction
+    assert "«hi Maki»" in client.requests[-1]["config"].system_instruction
+
+
+def test_runner_starts_and_controls_camera_by_voice():
+    from sofia.app import Runner
+
+    actions = act.Actions()
+    voice = pytypes.SimpleNamespace(actions=actions)
+    cfg = Config()
+    runner = Runner(cfg, voice, camera=False)
+
+    assert actions.cursor("pausar")["ok"] is False  # cámara apagada
+    assert actions.cursor("iniciar", "cabeza")["ok"] is True
+    assert runner.want_camera is True and cfg.mode == "head"
+
+    runner.app = pytypes.SimpleNamespace(mode_request=None, pause_request=None, stop_request=False)
+    assert actions.cursor("pausar")["ok"] is True and runner.app.pause_request is True
+    assert actions.cursor("iniciar", "mano")["ok"] is True
+    assert runner.app.mode_request == "hand_pinch" and runner.app.pause_request is False
+    assert actions.cursor("detener")["ok"] is True
+    assert runner.app.stop_request is True and runner.want_camera is False
 
 
 def test_trim_to_phrase():

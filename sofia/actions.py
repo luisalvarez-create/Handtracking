@@ -198,7 +198,9 @@ class Actions:
 
     def __init__(self) -> None:
         self.log: list[tuple[str, dict]] = []
-        self.on_cursor = None  # callback(pausar: bool) que pone la app principal
+        self.name = "Maki"
+        self.on_cursor = None  # callback(accion, modo) -> dict, lo pone la app principal
+        self.on_rename = None  # callback(nombre, frase) -> dict, lo pone el asistente de voz
 
     def _record(self, name: str, **kw) -> dict:
         self.log.append((name, kw))
@@ -262,18 +264,30 @@ class Actions:
         self._volume(level)
         return {"ok": True}
 
-    def cursor(self, pause: bool) -> dict:
+    def cursor(self, action: str, mode: str = "") -> dict:
+        action, mode = normalize(action), normalize(mode)
+        if action not in ("iniciar", "detener", "pausar", "reanudar"):
+            return {"ok": False, "error": "Acción no válida: usa iniciar, detener, pausar o reanudar."}
+        if mode and mode not in ("mano", "permanencia", "cabeza"):
+            return {"ok": False, "error": "Modo no válido: usa mano, permanencia o cabeza."}
         if self.on_cursor is None:
-            return {"ok": False, "error": "El control con cámara no está activo."}
-        self.on_cursor(pause)
-        return {"ok": True}
+            return {"ok": False, "error": "El control con cámara no está disponible en esta sesión."}
+        return self.on_cursor(action, mode)
+
+    def rename(self, name: str, phrase: str = "") -> dict:
+        name, phrase = " ".join(name.split()), " ".join(phrase.split())
+        if not name or len(name) > 30 or len(phrase) > 40:
+            return {"ok": False, "error": "El nombre debe tener entre 1 y 30 letras."}
+        if self.on_rename is None:
+            return {"ok": False, "error": "No se puede cambiar el nombre en esta sesión."}
+        return self.on_rename(name, phrase or name)
 
     def wait(self, seconds: float) -> dict:
         time.sleep(max(0.0, min(5.0, float(seconds or 1))))
         return {"ok": True}
 
     def speak(self, text: str) -> None:
-        print(f"Sofía: {text}", flush=True)
+        print(f"{self.name}: {text}", flush=True)
 
     # --- primitivas (las reemplaza cada sistema) --------------------------
 
@@ -391,7 +405,7 @@ class MacActions(Actions):
         return pick_voice(out)
 
     def speak(self, text: str) -> None:
-        print(f"Sofía: {text}", flush=True)
+        print(f"{self.name}: {text}", flush=True)
         cmd = ["say", "-v", self.voice, text] if self.voice else ["say", text]
         subprocess.run(cmd, check=False, timeout=120)
 

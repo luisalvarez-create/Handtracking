@@ -33,7 +33,7 @@ fi
 KEY_FILE="$HOME/Library/Application Support/Sofia/gemini_api_key"
 if [ -z "$GEMINI_API_KEY" ] && [ ! -s "$KEY_FILE" ] && [ ! -f "$KEY_FILE.omitida" ]; then
   echo
-  echo "Para el asistente de voz «Sofía» se necesita una clave de Gemini."
+  echo "Para el asistente de voz «Maki» se necesita una clave de Gemini."
   echo "Créala gratis en https://aistudio.google.com/apikey"
   if .venv/bin/python -m sofia --clave-gemini; then
     :

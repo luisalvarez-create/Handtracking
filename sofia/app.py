@@ -1,4 +1,4 @@
-"""Bucle principal: cámara → MediaPipe → gestos → ratón."""
+"""Bucle principal: cámara → MediaPipe → gestos → ratón, y el supervisor que la abre o cierra por voz."""
 from __future__ import annotations
 
 import subprocess
@@ -28,8 +28,11 @@ def play(sound: str, enabled: bool) -> None:
 class App:
     def __init__(self, cfg: Config, voice=None):
         self.cfg = cfg
-        self.voice = voice  # VoiceAssistant o None
-        self.pause_request: bool | None = None  # pedido por voz (otro hilo); se aplica en el bucle
+        self.voice = voice  # VoiceAssistant o None (solo para mostrar su estado)
+        # Pedidos por voz desde otro hilo; se aplican dentro del bucle principal.
+        self.pause_request: bool | None = None
+        self.mode_request: str | None = None
+        self.stop_request = False
         self.mouse = create_mouse()
         self.screen = self.mouse.screen_size()
         self.paused = False
@@ -75,9 +78,6 @@ class App:
             self.set_dwell(self.cfg.dwell_time - 0.2)
         return True
 
-    def request_pause(self, pause: bool) -> None:
-        self.pause_request = pause
-
     def set_dwell(self, value: float) -> None:
         self.cfg.dwell_time = round(min(3.0, max(0.4, value)), 1)
         self.controller.dwell.dwell_time = self.cfg.dwell_time
@@ -109,15 +109,19 @@ class App:
 
         print("Sofía lista. Teclas en la ventana de vista previa: p pausa · m modo · c centrar · +/- tiempo · q salir", flush=True)
         play("Tink", self.cfg.sounds)
-        if self.voice:
-            self.voice.actions.on_cursor = self.request_pause
-            self.voice.start()
         try:
             while True:
                 ok, frame = cap.read()
                 if not ok:
                     time.sleep(0.01)
                     continue
+                if self.stop_request:
+                    break
+                if self.mode_request and self.mode_request != self.cfg.mode:
+                    self.controller.reset()
+                    self.cfg.mode = self.mode_request
+                    self.setup_mode()
+                self.mode_request = None
                 if self.pause_request is not None:
                     if self.pause_request != self.paused:
                         self.toggle_pause()
@@ -141,8 +145,6 @@ class App:
         except KeyboardInterrupt:
             pass
         finally:
-            if self.voice:
-                self.voice.stop()
             for action in self.controller.reset():
                 execute(self.mouse, action)
             cap.release()
@@ -151,3 +153,72 @@ class App:
             self.tracker.close()
             self.cfg.save()
         return 0
+
+
+VOICE_MODES = {"mano": "hand_pinch", "permanencia": "hand_dwell", "cabeza": "head"}
+
+
+class Runner:
+    """Mantiene el asistente de voz activo y abre o cierra el control con cámara cuando se pide.
+
+    OpenCV y MediaPipe deben correr en el hilo principal (en macOS la ventana solo
+    funciona ahí), así que la voz solo deja pedidos y este bucle los atiende.
+    """
+
+    def __init__(self, cfg: Config, voice=None, camera: bool = True):
+        self.cfg = cfg
+        self.voice = voice
+        self.want_camera = camera
+        self.app: App | None = None
+        if voice:
+            voice.actions.on_cursor = self.cursor_request
+
+    def cursor_request(self, action: str, mode: str = "") -> dict:
+        """Lo llama el asistente de voz (otro hilo)."""
+        app = self.app
+        new_mode = VOICE_MODES.get(mode)
+        if action == "iniciar":
+            if new_mode:
+                self.cfg.mode = new_mode
+            if app:
+                app.mode_request = new_mode
+                app.pause_request = False
+                return {"ok": True, "estado": "ya estaba activo; quedó funcionando", "modo": MODE_LABELS[new_mode or self.cfg.mode]}
+            self.want_camera = True
+            return {"ok": True, "estado": "abriendo la cámara", "modo": MODE_LABELS[self.cfg.mode]}
+        if action == "detener":
+            self.want_camera = False
+            if app:
+                app.stop_request = True
+                return {"ok": True, "estado": "control con cámara apagado"}
+            return {"ok": True, "estado": "ya estaba apagado"}
+        if not app:
+            return {"ok": False, "error": "El control con cámara está apagado. Se puede iniciar."}
+        app.pause_request = action == "pausar"
+        return {"ok": True, "estado": "en pausa" if action == "pausar" else "funcionando"}
+
+    def run(self) -> int:
+        code = 0
+        if self.voice:
+            self.voice.start()
+        try:
+            while True:
+                if self.want_camera:
+                    self.app = App(self.cfg, self.voice)
+                    code = self.app.run()
+                    by_voice = self.app.stop_request
+                    self.app = None
+                    self.want_camera = False
+                    if self.voice is None or not by_voice and code == 0:
+                        break  # se cerró con q o Esc: termina todo
+                elif self.voice is None or not self.voice.alive():
+                    break
+                else:
+                    time.sleep(0.2)
+        except KeyboardInterrupt:
+            pass
+        finally:
+            if self.voice:
+                self.voice.stop()
+            self.cfg.save()
+        return code

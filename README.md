@@ -3,7 +3,7 @@
 Sofía permite usar la computadora **sin ratón** a personas con poca movilidad en las manos:
 
 - **Cursor con la cámara:** con la cámara web y [MediaPipe](https://ai.google.dev/edge/mediapipe), el cursor sigue la **mano** o la **cabeza**. El clic se hace con un pellizco, dejando el cursor quieto o abriendo la boca.
-- **Asistente de voz con Gemini:** *"Sofía, abre Chrome y busca hoteles en México"*, *"Sofía, abre Word y ayúdame a redactar una carta"*.
+- **Asistente de voz "Maki" con Gemini:** *"Hola Maki, abre Chrome y busca hoteles en México"*, *"Hola Maki, abre Word y ayúdame a redactar una carta"*, *"Hola Maki, activa el control con la mano"*.
 
 Plataforma principal: **macOS** (Mac con chip Apple o Intel). El código también corre en Windows y Linux, pero todavía no se ha probado ahí.
 
@@ -31,29 +31,42 @@ Plataforma principal: **macOS** (Mac con chip Apple o Intel). El código tambié
 
 La ventana muestra la cámara en espejo, los puntos detectados, la **zona activa** (rectángulo naranja: mover la mano dentro de él cubre toda la pantalla), una mini pantalla con la posición del cursor y el círculo de progreso del clic por permanencia.
 
-## Asistente de voz "Sofía"
+## Asistente de voz "Maki"
 
-Di **"Sofía"** y luego lo que necesitas, en una sola frase. Si solo dices "Sofía", te responde "¿Sí?" y escucha lo que sigue.
+Di **"Hola Maki"** y luego lo que necesitas, en una sola frase. Si solo dices "Hola Maki", te responde "¿Sí?" y escucha lo que sigue.
 
 | Puedes decir | Qué hace |
 | --- | --- |
-| *"Sofía, abre Chrome y busca hoteles en México"* | Abre Chrome con los resultados de la búsqueda |
-| *"Sofía, abre Word y ayúdame a redactar una carta"* | Abre Word con un documento nuevo, te pregunta para quién es y de qué trata, y escribe la carta |
-| *"Sofía, pon videos de recetas en YouTube"* | Busca en YouTube (también Google Maps, Wikipedia, Amazon y Mercado Libre) |
-| *"Sofía, abre gmail.com"* | Abre la página |
-| *"Sofía, cierra esta ventana"* · *"abre una pestaña nueva"* · *"guarda"* | Usa el atajo de teclado correspondiente |
-| *"Sofía, baja la página"* · *"sube el volumen"* | Desplaza la página o cambia el volumen |
-| *"Sofía, pausa el cursor"* · *"reanuda el cursor"* | Detiene o reactiva el control con la cámara |
+| *"Hola Maki, abre Chrome y busca hoteles en México"* | Abre Chrome con los resultados de la búsqueda |
+| *"Hola Maki, abre Word y ayúdame a redactar una carta"* | Abre Word con un documento nuevo, te pregunta para quién es y de qué trata, y escribe la carta |
+| *"Hola Maki, pon videos de recetas en YouTube"* | Busca en YouTube (también Google Maps, Wikipedia, Amazon y Mercado Libre) |
+| *"Hola Maki, abre gmail.com"* | Abre la página |
+| *"Hola Maki, cierra esta ventana"* · *"abre una pestaña nueva"* · *"guarda"* | Usa el atajo de teclado correspondiente |
+| *"Hola Maki, baja la página"* · *"sube el volumen"* | Desplaza la página o cambia el volumen |
+| *"Hola Maki, activa el control con la mano"* · *"…con la cabeza"* | Abre la cámara y el control del cursor (también si Sofía se abrió solo con voz) |
+| *"Hola Maki, pausa el cursor"* · *"reanuda el cursor"* · *"apaga el control con la mano"* | Pausa, reanuda o cierra el control con la cámara; la voz sigue activa |
+| *"Hola Maki, a partir de hoy te llamas Luna y te despiertas con hola Luna"* | Cambia su nombre y la frase de activación (se guarda) |
 
-- Cuando Sofía hace una pregunta, puedes contestar **sin volver a decir "Sofía"** (tienes 8 segundos).
+- Cuando Maki hace una pregunta, puedes contestar **sin volver a decir "Hola Maki"** (tienes 8 segundos).
 - Recuerda las últimas órdenes, así que entiende cosas como *"ahora ciérralo"*.
 - **Antes de enviar, comprar o borrar algo, siempre pide confirmación.**
-- Gemini no puede ejecutar cualquier cosa en la computadora. Solo puede pedir estas acciones: abrir apps instaladas, abrir páginas web (http/https), escribir texto, presionar teclas, desplazar, volumen y pausar el cursor.
+- Gemini no puede ejecutar cualquier cosa en la computadora. Solo puede pedir estas acciones: abrir apps instaladas, abrir páginas web (http/https), escribir texto, presionar teclas, desplazar, volumen, controlar la cámara del cursor y cambiar el nombre.
+
+### Cambiar el nombre o la frase
+
+Se puede pedir por voz (ver la tabla) o desde la Terminal:
+
+```bash
+python -m sofia --nombre Maki --activacion "hola Maki"   # el predeterminado
+python -m sofia --nombre Sofía                          # se activa diciendo "Sofía"
+```
+
+La frase se reconoce **por cómo suena**: el modelo de voz en español no conoce "Maki" y escucha "hola maqui" o "hola aquí", así que se compara el sonido. Para evitar activaciones con saludos parecidos ("hola mami", "hola Mari"), tanto la frase completa como el nombre deben sonar parecidos. Si se activa sola, sube `wake_similarity` (por ejemplo a 0.85); si no te reconoce, bájalo a 0.75. Funcionan mejor los nombres de dos sílabas o más, distintos de palabras comunes.
 
 ### Privacidad y costo
 
-- La palabra "Sofía" se reconoce **en la computadora, sin internet** (modelo [Vosk](https://alphacephei.com/vosk/) en español, de unos 40 MB, que se descarga la primera vez). **Solo** las frases que empiezan con "Sofía" (o la respuesta a una pregunta suya) se envían a Gemini.
-- Se usa el modelo `gemini-3.5-flash-lite`, de los más baratos. Cada orden usa unos pocos miles de tokens (las instrucciones de Sofía, el audio y cada paso), alrededor de una décima de centavo de dólar. La clave de Google AI Studio tiene un **nivel gratuito**, pero en ese nivel Google puede usar lo que se envía para mejorar sus productos. Si se van a dictar datos personales, conviene activar la facturación (nivel de pago), donde eso no ocurre.
+- La frase "Hola Maki" se reconoce **en la computadora, sin internet** (modelo [Vosk](https://alphacephei.com/vosk/) en español, de unos 40 MB, que se descarga la primera vez). **Solo** las frases que empiezan con "Hola Maki" (o la respuesta a una pregunta suya) se envían a Gemini.
+- Se usa el modelo `gemini-3.5-flash-lite`, de los más baratos. Cada orden usa unos pocos miles de tokens (las instrucciones de Maki, el audio y cada paso), alrededor de una décima de centavo de dólar. La clave de Google AI Studio tiene un **nivel gratuito**, pero en ese nivel Google puede usar lo que se envía para mejorar sus productos. Si se van a dictar datos personales, conviene activar la facturación (nivel de pago), donde eso no ocurre.
 
 ### La clave de Gemini
 
@@ -79,7 +92,7 @@ python -m sofia                      # usa el último modo elegido
 python -m sofia --modo cabeza        # control con la cabeza
 python -m sofia --modo permanencia --permanencia 1.5
 python -m sofia --sin-voz            # solo cursor
-python -m sofia --solo-voz           # solo asistente de voz, sin cámara
+python -m sofia --solo-voz           # solo asistente de voz; la cámara se abre cuando se la pidas
 python -m sofia --orden "abre Chrome y busca hoteles en México"   # probar una orden escrita
 python -m sofia --orden "abre Word y escribe una carta" --simular # ver qué haría, sin hacerlo
 python -m sofia --help               # todas las opciones
@@ -91,7 +104,7 @@ En **Ajustes del Sistema → Privacidad y seguridad**, activa para la app desde 
 
 1. **Cámara**: para ver la mano o la cara.
 2. **Accesibilidad**: para mover el cursor, hacer clic y que el asistente pueda escribir y usar atajos. Sin este permiso, Sofía ve la mano pero el cursor no se mueve.
-3. **Micrófono**: para el asistente de voz. macOS lo pregunta la primera vez que Sofía escucha.
+3. **Micrófono**: para el asistente de voz. macOS lo pregunta la primera vez que Maki escucha.
 
 Después de activar los permisos, cierra y vuelve a abrir Sofía.
 
@@ -109,8 +122,9 @@ La configuración se guarda en `~/Library/Application Support/Sofia/config.json`
 | `mouth_open` | Qué tan abierta debe estar la boca para el clic |
 | `voice` | `false` para apagar el asistente de voz |
 | `gemini_model` | Modelo de Gemini (`gemini-3.5-flash-lite`; uno más capaz, por ejemplo `gemini-3.8-flash`, cuesta más) |
-| `wake_words`, `wake_confidence` | Palabra clave (`["sofía"]`) y qué tan seguro debe estar el reconocimiento (0–1). Súbelo si se activa sola; bájalo si no te reconoce |
-| `followup_seconds` | Segundos para contestar una pregunta de Sofía sin decir "Sofía" |
+| `assistant_name`, `wake_words` | Nombre (`Maki`) y frase de activación (`["hola maki"]`) |
+| `wake_similarity`, `wake_confidence` | Qué tan parecido debe sonar (0–1, `0.8`) y la confianza mínima del reconocimiento local (`0.5`) |
+| `followup_seconds` | Segundos para contestar una pregunta de Maki sin repetir la frase de activación |
 | `voice_name` | Voz de macOS (vacío = la primera de español de México, por ejemplo Paulina). Más voces: Ajustes del Sistema → Accesibilidad → Contenido leído |
 | `mic_device` | Número de micrófono (vacío = el predeterminado) |
 
@@ -134,7 +148,7 @@ sofia/
   preview.py    Ventana de vista previa
   config.py     Configuración persistente
   voice.py      Asistente de voz: une la escucha, Gemini y las acciones
-  listener.py   Micrófono y palabra clave "Sofía" (Vosk, sin internet)
+  listener.py   Micrófono y frase de activación por sonido (Vosk, sin internet)
   assistant.py  Gemini: funciones permitidas, historial corto y clave de la API
   actions.py    Acciones en la Mac: abrir apps, páginas, escribir, atajos, volumen, voz (say)
 ```

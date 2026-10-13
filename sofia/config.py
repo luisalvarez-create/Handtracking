@@ -61,8 +61,10 @@ class Config:
     # Asistente de voz (Gemini).
     voice: bool = True
     gemini_model: str = "gemini-3.5-flash-lite"
-    wake_words: list[str] = field(default_factory=lambda: ["sofía"])
-    wake_confidence: float = 0.6  # confianza mínima al reconocer "Sofía" (0–1)
+    assistant_name: str = "Maki"
+    wake_words: list[str] = field(default_factory=lambda: ["hola maki"])  # frases de activación, por ejemplo ["sofía"]
+    wake_similarity: float = 0.8  # qué tan parecido debe sonar el inicio de la frase (0–1)
+    wake_confidence: float = 0.5  # confianza mínima del reconocimiento local en al menos una de esas palabras (0–1)
     followup_seconds: float = 8.0  # tiempo para contestar sin decir "Sofía" después de una pregunta
     voice_name: str = ""  # voz de `say` (vacío = la primera de español de México)
     mic_device: int | None = None  # micrófono (vacío = el predeterminado)

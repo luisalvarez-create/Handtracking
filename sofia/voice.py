@@ -1,4 +1,4 @@
-"""Une la escucha, Gemini y las acciones en el asistente "Sofía"."""
+"""Une la escucha, Gemini y las acciones en el asistente de voz ("Maki", "Sofía"…)."""
 from __future__ import annotations
 
 import threading
@@ -23,17 +23,40 @@ class VoiceAssistant:
         key = api_key if api_key is not None else load_api_key()
         if not key and client is None:
             raise RuntimeError(NO_KEY)
-        self.assistant = Assistant(self.actions, key, cfg.gemini_model, client=client)
+        self.assistant = Assistant(self.actions, key, cfg.gemini_model, client=client, name=cfg.assistant_name, wake=self.wake_text())
+        self.actions.name = cfg.assistant_name
+        self.actions.on_rename = self.rename
         self.state = "Voz apagada"
+        self.logic = WakeLogic(cfg.wake_words, cfg.wake_confidence, cfg.followup_seconds, cfg.wake_similarity)
         self.listener: VoiceListener | None = None
         self.lock = threading.Lock()
+
+    def wake_text(self) -> str:
+        return self.cfg.wake_words[0] if self.cfg.wake_words else self.cfg.assistant_name
+
+    def idle_text(self) -> str:
+        return f'Di "{self.wake_text()}"'
+
+    def rename(self, name: str, phrase: str) -> dict:
+        """Cambia el nombre y la frase de activación, y lo guarda para la próxima vez."""
+        self.cfg.assistant_name = name
+        self.cfg.wake_words = [phrase]
+        self.cfg.save()
+        self.logic.wake_words = [phrase]
+        self.assistant.name, self.assistant.wake = name, phrase
+        self.actions.name = name
+        if self.listener:
+            self.listener.idle_text = self.idle_text()
+        return {"ok": True, "nombre": name, "frase_activacion": phrase}
+
+    def alive(self) -> bool:
+        return self.listener is not None and self.listener.is_alive()
 
     def set_state(self, text: str) -> None:
         self.state = text
 
     def start(self) -> None:
-        logic = WakeLogic(self.cfg.wake_words, self.cfg.wake_confidence, self.cfg.followup_seconds)
-        self.listener = VoiceListener(logic, self.command, self.ack, self.set_state, self.cfg.mic_device)
+        self.listener = VoiceListener(self.logic, self.command, self.ack, self.set_state, self.cfg.mic_device, self.idle_text())
         self.listener.start()
 
     def stop(self) -> None:
@@ -45,7 +68,7 @@ class VoiceAssistant:
         self.actions.speak("¿Sí?")
 
     def command(self, pcm: bytes | None = None, hint: str = "", text: str = "") -> bool:
-        """Procesa una orden. Devuelve True si Sofía hizo una pregunta (espera respuesta)."""
+        """Procesa una orden. Devuelve True si la asistente hizo una pregunta (espera respuesta)."""
         with self.lock:
             print(f"🗣️  {hint or text}", flush=True)
             self.set_state("Pensando…")

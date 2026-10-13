@@ -1,14 +1,18 @@
-"""Escucha del micrófono con la palabra clave "Sofía".
+"""Escucha del micrófono con la frase de activación ("hola Maki", "Sofía"…).
 
-El reconocimiento de la palabra clave es local (Vosk, sin internet): solo
-cuando una frase empieza con "Sofía" se manda ese audio a Gemini. Después de
-que Sofía pregunta algo, la siguiente frase cuenta como respuesta sin tener
-que volver a decir "Sofía".
+El reconocimiento es local (Vosk, sin internet): solo cuando una frase empieza
+con la frase de activación se manda ese audio a Gemini. Después de que el
+asistente pregunta algo, la siguiente frase cuenta como respuesta sin repetirla.
+
+La comparación es por cómo suena, no por palabras: el modelo en español no
+conoce "Maki" y escucha "hola Maki" como "hola maqui" o "hola aquí".
 """
 from __future__ import annotations
 
 import collections
+import difflib
 import json
+import re
 import queue
 import ssl
 import threading
@@ -25,7 +29,7 @@ RATE = 16000
 BLOCK = 1600  # 0.1 s
 VOSK_MODEL = "vosk-model-small-es-0.42"
 VOSK_URL = f"https://alphacephei.com/vosk/models/{VOSK_MODEL}.zip"
-WAKE_POSITIONS = 3  # "Sofía" debe estar entre las primeras palabras ("oye Sofía…", "hola Sofía…")
+WAKE_POSITIONS = 3  # la activación puede empezar en las primeras palabras ("oye Sofía…", "hola Sofía…")
 PAD = 0.35  # segundos de audio extra antes y después de la frase
 
 
@@ -37,32 +41,93 @@ class Decision:
     end: float | None = None
 
 
+ENGLISH = {"hi": "jai", "hey": "jei", "ok": "okei", "okay": "okei"}
+
+
+def phonetic(text: str) -> str:
+    """Escritura aproximada de cómo suena en español, sin espacios: "hi Maki" → "jaimaki"."""
+    out = []
+    for word in normalize(text).split():
+        word = ENGLISH.get(word, word)
+        word = re.sub(r"[^a-zñ]", "", word)
+        word = word.replace("ch", "1").replace("qu", "k").replace("ll", "y").replace("h", "")
+        word = re.sub(r"c(?=[ei])", "s", word).replace("c", "k").replace("z", "s").replace("v", "b")
+        word = re.sub(r"g(?=[ei])", "j", word).replace("x", "ks").replace("w", "u").replace("y", "i")
+        out.append(word.replace("1", "ch"))
+    return re.sub(r"(.)\1+", r"\1", "".join(out))
+
+
+def _tail_score(name: str, sounds: str) -> float:
+    """Qué tan parecido suena el final de lo escuchado al nombre ("maki")."""
+    return max(
+        difflib.SequenceMatcher(None, name, sounds[-n:]).ratio()
+        for n in range(max(1, len(name) - 1), len(name) + 2)
+    )
+
+
+def match_wake(words: list[str], phrase: str, threshold: float) -> tuple[int, float] | None:
+    """Si las palabras empiezan con algo que suena como la frase, devuelve (palabras usadas, parecido).
+
+    Pide dos cosas: que toda la frase suene parecida y que el nombre (la última
+    palabra) también, para que "hola mami" o "hola Mari" no activen "hola Maki".
+    """
+    target = phonetic(phrase)
+    name = phonetic(phrase.split()[-1]) if phrase.split() else ""
+    if not target:
+        return None
+    best = None
+    sounds = ""
+    for i, w in enumerate(words):
+        sounds += phonetic(w)
+        if len(sounds) > len(target) + 3:
+            break
+        score = difflib.SequenceMatcher(None, target, sounds).ratio()
+        if score >= threshold and _tail_score(name, sounds) >= threshold and (best is None or score > best[1]):
+            best = (i + 1, score)
+    return best
+
+
 @dataclass
 class WakeLogic:
     """Decide qué hacer con cada frase reconocida. No depende del micrófono (se prueba sola)."""
 
-    wake_words: list[str] = field(default_factory=lambda: ["sofia"])
-    min_conf: float = 0.6
+    wake_words: list[str] = field(default_factory=lambda: ["hola maki"])
+    min_conf: float = 0.5
     followup_seconds: float = 8.0
+    similarity: float = 0.8
     followup_until: float = 0.0
 
     def expect_reply(self, now: float) -> None:
         self.followup_until = now + self.followup_seconds
 
+    def find_wake(self, words: list[dict]) -> int | None:
+        """Índice de la primera palabra después de la activación, o None."""
+        texts = [w["word"] for w in words]
+        for start in range(min(WAKE_POSITIONS, len(words))):
+            for phrase in self.wake_words:
+                found = match_wake(texts[start:], phrase, self.similarity)
+                if not found:
+                    continue
+                # El modelo no conoce nombres como "Maki" y duda en alguna palabra:
+                # basta con que una se haya oído con seguridad; el sonido decide lo demás.
+                used = words[start:start + found[0]]
+                if max(w.get("conf", 1.0) for w in used) >= self.min_conf:
+                    return start + found[0]
+        return None
+
     def decide(self, words: list[dict], now: float) -> Decision:
         words = [w for w in words if w.get("word") and w["word"] != "[unk]"]
         if not words:
             return Decision("ignore")
-        wake = {normalize(w) for w in self.wake_words}
-        for i, w in enumerate(words[:WAKE_POSITIONS]):
-            if normalize(w["word"]) in wake and w.get("conf", 1.0) >= self.min_conf:
-                rest = words[i + 1:]
-                if not rest:
-                    self.expect_reply(now)
-                    return Decision("ack")
-                self.followup_until = 0.0
-                return Decision("command", " ".join(x["word"] for x in rest), words[0].get("start"), words[-1].get("end"))
-        if now <= self.followup_until:
+        after = self.find_wake(words)
+        if after is not None:
+            rest = words[after:]
+            if not rest:
+                self.expect_reply(now)
+                return Decision("ack")
+            self.followup_until = 0.0
+            return Decision("command", " ".join(x["word"] for x in rest), words[0].get("start"), words[-1].get("end"))
+        if now < self.followup_until:
             self.followup_until = 0.0
             return Decision("command", " ".join(x["word"] for x in words), words[0].get("start"), words[-1].get("end"))
         return Decision("ignore")
@@ -95,13 +160,14 @@ def ensure_vosk_model(directory: Path | None = None) -> Path:
 class VoiceListener(threading.Thread):
     """Hilo que escucha el micrófono y llama a on_command(pcm, pista) con cada orden."""
 
-    def __init__(self, logic: WakeLogic, on_command, on_ack, on_state=None, device=None):
+    def __init__(self, logic: WakeLogic, on_command, on_ack, on_state=None, device=None, idle_text="Te escucho"):
         super().__init__(daemon=True, name="sofia-voz")
         self.logic = logic
         self.on_command = on_command  # (pcm: bytes, hint: str) -> bool (True si Sofía hizo una pregunta)
         self.on_ack = on_ack  # () -> None: responde "¿Sí?"
         self.on_state = on_state or (lambda s: None)
         self.device = device
+        self.idle_text = idle_text  # por ejemplo «Di "hola Maki"»
         self.audio: queue.Queue[bytes] = queue.Queue()
         self.stop_event = threading.Event()
         self.error: str = ""
@@ -139,8 +205,8 @@ class VoiceListener(threading.Thread):
         fed = 0  # muestras procesadas desde el último Reset
         buf_start = 0  # muestra en la que empieza buf
         with stream:
-            self.on_state("Di «Sofía»")
-            print("🎙️  Escuchando. Di «Sofía» y tu orden.", flush=True)
+            self.on_state(self.idle_text)
+            print(f"🎙️  Escuchando. {self.idle_text} y tu orden.", flush=True)
             while not self.stop_event.is_set():
                 try:
                     block = self.audio.get(timeout=0.3)
@@ -175,7 +241,7 @@ class VoiceListener(threading.Thread):
                     fed = buf_start = 0
                     if not self.stop_event.is_set():
                         stream.start()
-                    self.on_state("Te escucho…" if time.monotonic() <= self.logic.followup_until else "Di «Sofía»")
+                    self.on_state("Te escucho…" if time.monotonic() < self.logic.followup_until else self.idle_text)
 
 
 def trim(pcm: bytes, first_sample: int, start: float | None, end: float | None) -> bytes:

@@ -2,7 +2,7 @@
 
 Cada orden se manda como audio (y la transcripción local como pista). Gemini
 responde con llamadas a funciones; se ejecutan, se le devuelve el resultado y
-así hasta que contesta con un texto corto que Sofía dice en voz alta.
+así hasta que contesta con un texto corto que la asistente dice en voz alta.
 """
 from __future__ import annotations
 
@@ -22,12 +22,14 @@ HISTORY_TURNS = 4
 DAYS = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
 MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
 
-SYSTEM = """Eres Sofía, una asistente de voz en español de México que ayuda a una persona con poca movilidad en las manos a usar su computadora Mac. La persona mueve el cursor con la cámara y te habla para todo lo demás.
+SYSTEM = """Eres {name}, una asistente de voz en español de México que ayuda a una persona con poca movilidad en las manos a usar su computadora Mac. La persona te activa diciendo «{wake}», mueve el cursor con la cámara (control con la mano o con la cabeza, "hand tracking") y te habla para todo lo demás.
 
 Cómo trabajar:
 - Usa las funciones para actuar. Puedes encadenar varias: por ejemplo abrir_app y luego buscar_en_web.
 - Para escribir en un documento nuevo de Word, Pages o TextEdit: abre la app, presiona "cmd+n", espera 2 segundos y luego usa escribir_texto.
 - Si te piden redactar algo (una carta, un correo, una nota), escríbelo tú completo, bien redactado, con saludo y despedida, y pégalo con escribir_texto. Si falta un dato indispensable (por ejemplo a quién va dirigida la carta), pregunta primero con una sola pregunta corta.
+- Si piden abrir, activar o encender el control con la mano, el hand tracking o el cursor con la cámara, usa control_cursor con accion "iniciar" (modo "mano", o "cabeza" si lo piden con la cabeza). Para apagarlo usa "detener"; para dejarlo quieto un momento, "pausar" y "reanudar".
+- Si piden que cambies de nombre o de frase de activación, usa cambiar_nombre.
 - Atajos útiles: cerrar ventana "cmd+w", pestaña nueva "cmd+t", salir de una app "cmd+q", deshacer "cmd+z", guardar "cmd+s", buscar en la página "cmd+f", recargar "cmd+r", copiar "cmd+c", pegar "cmd+v", seleccionar todo "cmd+a".
 - Nunca envíes mensajes o correos, compres, pagues ni borres archivos sin que la persona lo confirme en ese momento. Pregunta "¿Lo envío?" antes de presionar enviar.
 - Si el audio no es una orden para ti (ruido, una conversación con otra persona) o no se entiende, no uses funciones y responde exactamente: (nada)
@@ -99,8 +101,25 @@ TOOLS = [
     },
     {
         "name": "control_cursor",
-        "description": "Pausa o reanuda el control del cursor con la cámara.",
-        "parameters": _schema({"pausar": {"type": "boolean", "description": "true para pausar, false para reanudar"}}, ["pausar"]),
+        "description": "Inicia, detiene, pausa o reanuda el control del cursor con la cámara (con la mano o con la cabeza).",
+        "parameters": _schema(
+            {
+                "accion": {"type": "string", "enum": ["iniciar", "detener", "pausar", "reanudar"]},
+                "modo": {"type": "string", "enum": ["mano", "permanencia", "cabeza"], "description": "mano = pellizco para clic; permanencia = clic al quedarse quieto; cabeza = mover con la cabeza"},
+            },
+            ["accion"],
+        ),
+    },
+    {
+        "name": "cambiar_nombre",
+        "description": "Cambia el nombre de la asistente y la frase con la que se activa (por ejemplo nombre Luna, frase hola Luna).",
+        "parameters": _schema(
+            {
+                "nombre": {"type": "string", "description": "Nuevo nombre, por ejemplo Maki"},
+                "frase_activacion": {"type": "string", "description": "Frase para activarla, por ejemplo hola Luna. Si no la dicen, se usa el nombre"},
+            },
+            ["nombre"],
+        ),
     },
     {
         "name": "esperar",
@@ -129,7 +148,9 @@ def run_tool(actions: Actions, name: str, args: dict) -> dict:
         if name == "volumen":
             return actions.set_volume(str(a.get("nivel", "")))
         if name == "control_cursor":
-            return actions.cursor(bool(a.get("pausar", True)))
+            return actions.cursor(str(a.get("accion", "")), str(a.get("modo") or ""))
+        if name == "cambiar_nombre":
+            return actions.rename(str(a.get("nombre", "")), str(a.get("frase_activacion") or ""))
         if name == "esperar":
             return actions.wait(float(a.get("segundos") or 1))
     except Exception as e:  # una acción fallida no debe tumbar al asistente
@@ -182,10 +203,12 @@ def save_api_key(key: str) -> Path:
 # --- asistente ---------------------------------------------------------------
 
 class Assistant:
-    def __init__(self, actions: Actions, api_key: str, model: str = DEFAULT_MODEL, client=None):
+    def __init__(self, actions: Actions, api_key: str, model: str = DEFAULT_MODEL, client=None, name: str = "Maki", wake: str = "hola Maki"):
         from google.genai import types
 
         self.types = types
+        self.name = name
+        self.wake = wake
         self.actions = actions
         self.model = model or DEFAULT_MODEL
         if client is None:
@@ -198,7 +221,7 @@ class Assistant:
     def _config(self):
         t = self.types
         apps = ", ".join(self.actions.apps()[:120])
-        system = f"{SYSTEM}\n\nFecha y hora actual: {now_text()}.\nApps instaladas: {apps}."
+        system = SYSTEM.format(name=self.name, wake=self.wake) + f"\n\nFecha y hora actual: {now_text()}.\nApps instaladas: {apps}."
         return t.GenerateContentConfig(
             system_instruction=system,
             tools=[t.Tool(function_declarations=[
@@ -208,7 +231,7 @@ class Assistant:
         )
 
     def handle(self, audio_pcm: bytes | None = None, hint: str = "", text: str = "") -> str:
-        """Procesa una orden (audio o texto). Devuelve lo que Sofía debe decir ("" si nada)."""
+        """Procesa una orden (audio o texto). Devuelve lo que la asistente debe decir ("" si nada)."""
         t = self.types
         parts = []
         if audio_pcm:
