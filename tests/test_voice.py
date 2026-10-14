@@ -86,16 +86,29 @@ def test_parse_shortcut_rejects(bad):
         act.parse_shortcut(bad)
 
 
-def test_pick_voice():
+def test_pick_voice_prefers_female_spanish_voices():
+    # Orden real de `say -v ?` en macOS: alfabético, con voces masculinas de México antes que Paulina.
     listing = (
-        "Alex                en_US    # Most people recognize me by my voice.\n"
+        "Alex                es_US    # no\n"
+        "Eddy (Español (México)) es_MX    # Hola, me llamo Eddy.\n"
+        "Flo (Español (México))  es_MX    # Hola, me llamo Flo.\n"
+        "Grandpa (Español (México)) es_MX # Hola.\n"
+        "Jorge               es_ES    # Hola, me llamo Jorge.\n"
+        "Juan                es_MX    # Hola, me llamo Juan.\n"
         "Mónica              es_ES    # Hola, me llamo Mónica.\n"
         "Paulina             es_MX    # Hola, me llamo Paulina.\n"
-        "Eddy (Español (México)) es_MX    # Hola, me llamo Eddy.\n"
+        "Reed (Español (México)) es_MX    # Hola.\n"
     )
     assert act.pick_voice(listing) == "Paulina"
-    assert act.pick_voice("Mónica es_ES # Hola\n") == "Mónica"
+    assert act.pick_voice(listing + "Paulina (Enhanced)  es_MX    # Hola.\n") == "Paulina (Enhanced)"
+    assert act.pick_voice("Eddy (Español (México)) es_MX # Hola\nFlo (Español (México)) es_MX # Hola\n") == "Flo (Español (México))"
+    assert act.pick_voice("Juan es_MX # Hola\nMónica es_ES # Hola\n") == "Mónica"  # femenina de España antes que masculina
+    assert act.pick_voice("Juan es_MX # Hola\n") == "Juan"  # si no hay femenina, al menos en español
     assert act.pick_voice("Alex en_US # Hi\n") == ""
+
+
+def test_system_prompt_speaks_in_feminine():
+    assert "femenino" in asst.SYSTEM and "lista" in asst.SYSTEM
 
 
 def test_actions_validate_before_acting():

@@ -410,8 +410,20 @@ class MacActions(Actions):
         subprocess.run(cmd, check=False, timeout=120)
 
 
+# Voces femeninas de macOS en español. "Eddy", "Juan", "Reed", "Rocko", "Jorge"… son masculinas.
+FEMALE_VOICES = {
+    "paulina", "angelica", "marisol", "monica", "soledad", "isabela", "francisca", "ximena",
+    "flo", "sandy", "shelley", "grandma",
+}
+VOICE_QUALITY = {"premium": 2, "enhanced": 1, "mejorada": 1}
+
+
 def pick_voice(say_list: str) -> str:
-    """Elige voz de `say -v ?`: primero es_MX, luego cualquier es_*."""
+    """Elige voz femenina de `say -v ?`: primero de México, luego cualquier español.
+
+    Dentro de cada grupo prefiere Paulina y la mejor calidad (Premium > Enhanced).
+    Si no hay ninguna femenina instalada, usa la primera en español.
+    """
     voices = []
     for line in say_list.splitlines():
         if "#" not in line:
@@ -419,10 +431,20 @@ def pick_voice(say_list: str) -> str:
         head = line.split("#")[0].split()
         if len(head) >= 2:
             voices.append((" ".join(head[:-1]), head[-1]))
+
+    def info(name: str) -> tuple[str, int]:
+        base = normalize(name.split("(")[0])
+        quality = max((q for word, q in VOICE_QUALITY.items() if word in normalize(name)), default=0)
+        return base, quality
+
     for prefix in ("es_MX", "es_"):
-        for name, locale in voices:
-            if locale.startswith(prefix):
-                return name
+        female = [(n, *info(n)) for n, loc in voices if loc.startswith(prefix) and info(n)[0] in FEMALE_VOICES]
+        if female:
+            female.sort(key=lambda v: (v[1] != "paulina", -v[2]))
+            return female[0][0]
+    for name, locale in voices:
+        if locale.startswith("es_"):
+            return name
     return ""
 
 

@@ -125,7 +125,7 @@ La configuración se guarda en `~/Library/Application Support/Sofia/config.json`
 | `assistant_name`, `wake_words` | Nombre (`Maki`) y frase de activación (`["hola maki"]`) |
 | `wake_similarity`, `wake_confidence` | Qué tan parecido debe sonar (0–1, `0.8`) y la confianza mínima del reconocimiento local (`0.5`) |
 | `followup_seconds` | Segundos para contestar una pregunta de Maki sin repetir la frase de activación |
-| `voice_name` | Voz de macOS (vacío = la primera de español de México, por ejemplo Paulina). Más voces: Ajustes del Sistema → Accesibilidad → Contenido leído |
+| `voice_name` | Voz de macOS (vacío = una voz femenina en español: Paulina de preferencia, en su mejor calidad). Para ver las instaladas: `say -v "?" \| grep es_`. Más voces: Ajustes del Sistema → Accesibilidad → Contenido leído |
 | `mic_device` | Número de micrófono (vacío = el predeterminado) |
 
 ## Desarrollo
