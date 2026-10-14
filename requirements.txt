@@ -6,5 +6,5 @@ pynput; sys_platform != "darwin"
 pyobjc-framework-Quartz; sys_platform == "darwin"
 pyobjc-framework-ApplicationServices; sys_platform == "darwin"
 google-genai>=1.50
-vosk>=0.3.45
+vosk>=0.3.44
 sounddevice>=0.4.6
