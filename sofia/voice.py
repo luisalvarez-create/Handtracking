@@ -26,7 +26,7 @@ class VoiceAssistant:
         self.assistant = Assistant(self.actions, key, cfg.gemini_model, client=client, name=cfg.assistant_name, wake=self.wake_text())
         self.actions.name = cfg.assistant_name
         self.actions.on_rename = self.rename
-        self.state = "Voz apagada"
+        self.state = "Preparando la voz…"
         self.logic = WakeLogic(cfg.wake_words, cfg.wake_confidence, cfg.followup_seconds, cfg.wake_similarity)
         self.listener: VoiceListener | None = None
         self.lock = threading.Lock()

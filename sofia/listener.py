@@ -186,17 +186,27 @@ class VoiceListener(threading.Thread):
                 return
 
     def run(self) -> None:
+        step = "Preparando la voz…"
         try:
+            self.on_state(step)
             import sounddevice as sd
             from vosk import KaldiRecognizer, Model, SetLogLevel
 
             SetLogLevel(-1)
-            model = Model(str(ensure_vosk_model()))
+            if not (config_dir() / "models" / VOSK_MODEL / "am").exists():
+                step = "Descargando voz (40 MB)…"
+                self.on_state(step)
+            path = ensure_vosk_model()
+            step = "Cargando voz…"
+            self.on_state(step)
+            model = Model(str(path))
+            step = "Abriendo micrófono…"
+            self.on_state(step)
             stream = sd.RawInputStream(samplerate=RATE, blocksize=BLOCK, channels=1, dtype="int16", device=self.device, callback=self._callback)
         except Exception as e:  # sin micrófono, sin permiso o sin internet para el modelo
             self.error = f"{type(e).__name__}: {e}"
-            self.on_state("Voz no disponible")
-            print(f"⚠️  El asistente de voz no pudo iniciar: {self.error}", flush=True)
+            self.on_state("Error de voz: ver Terminal")
+            print(f"⚠️  El asistente de voz no pudo iniciar ({step}): {self.error}", flush=True)
             return
 
         rec = KaldiRecognizer(model, RATE)
@@ -204,6 +214,8 @@ class VoiceListener(threading.Thread):
         buf: collections.deque[bytes] = collections.deque(maxlen=int(30 * RATE / BLOCK))  # máximo 30 s
         fed = 0  # muestras procesadas desde el último Reset
         buf_start = 0  # muestra en la que empieza buf
+        silent_blocks = 0  # macOS entrega puro silencio si la app no tiene permiso de Micrófono
+        warned_silence = False
         with stream:
             self.on_state(self.idle_text)
             print(f"🎙️  Escuchando. {self.idle_text} y tu orden.", flush=True)
@@ -212,6 +224,16 @@ class VoiceListener(threading.Thread):
                     block = self.audio.get(timeout=0.3)
                 except queue.Empty:
                     continue
+                if not warned_silence:
+                    silent_blocks = silent_blocks + 1 if not any(block) else -1_000_000
+                    if silent_blocks >= 50:  # 5 s de ceros exactos
+                        warned_silence = True
+                        self.on_state("Sin audio: permiso de Micrófono")
+                        print(
+                            "⚠️  El micrófono solo entrega silencio. Activa la Terminal en\n"
+                            "   Ajustes del Sistema → Privacidad y seguridad → Micrófono, y vuelve a abrir Sofía.",
+                            flush=True,
+                        )
                 if len(buf) == buf.maxlen:
                     buf_start += len(buf[0]) // 2
                 buf.append(block)
