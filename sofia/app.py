@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+import threading
 import time
 
 import cv2
@@ -12,6 +13,7 @@ from .gestures import HandController, HeadController
 from .mouse import accessibility_ok, create_mouse, execute
 from .preview import draw
 from .tracker import Tracker, open_camera
+from .windows import create_window_mover
 
 WINDOW = "Sofia"
 
@@ -34,6 +36,8 @@ class App:
         self.mode_request: str | None = None
         self.stop_request = False
         self.mouse = create_mouse()
+        self.windows = create_window_mover(self.mouse)
+        self._actions = None  # acciones de teclado para gestos, si no hay asistente de voz
         self.screen = self.mouse.screen_size()
         self.paused = False
         self.tracker: Tracker | None = None
@@ -53,10 +57,52 @@ class App:
             self.controller = HandController(self.cfg, self.screen, click)
         print(f"Modo: {MODE_LABELS[self.cfg.mode]}", flush=True)
 
+    def apply(self, action) -> None:
+        """Ejecuta una acción del controlador: ratón, ventana o gesto programado."""
+        if action.kind == "window_grab":
+            self.windows.grab(action.x, action.y)
+            play("Pop", self.cfg.sounds)
+        elif action.kind == "window_move":
+            self.windows.move(action.x, action.y)
+        elif action.kind == "window_release":
+            self.windows.release(action.x, action.y)
+        elif action.kind == "gesture":
+            self.run_gesture(action.value)
+        elif action.kind == "gesture_sound":
+            play("Pop", self.cfg.sounds)
+        else:
+            execute(self.mouse, action)
+            if action.kind == "click":
+                play("Tink", self.cfg.sounds)
+
+    def keyboard(self):
+        if self.voice:
+            return self.voice.actions
+        if self._actions is None:
+            from .actions import create_actions
+
+            self._actions = create_actions()
+        return self._actions
+
+    def run_gesture(self, value: str) -> None:
+        """Gestos programados: "atajo:cmd+w", "orden:abre Chrome" o "escuchar"."""
+        kind, _, arg = value.partition(":")
+        play("Tink", self.cfg.sounds)
+        if kind == "atajo":
+            result = self.keyboard().press_keys(arg)
+            if not result.get("ok"):
+                print(f"Gesto: {result.get('error')}", flush=True)
+        elif kind in ("orden", "escuchar") and not self.voice:
+            print("Ese gesto necesita el asistente de voz (falta la clave de Gemini).", flush=True)
+        elif kind == "orden":
+            threading.Thread(target=self.voice.command, kwargs={"text": arg}, daemon=True).start()
+        elif kind == "escuchar" and self.voice.listener:
+            self.voice.listener.wake()
+
     def toggle_pause(self) -> None:
         self.paused = not self.paused
         for action in self.controller.reset():
-            execute(self.mouse, action)  # suelta un arrastre en curso
+            self.apply(action)  # suelta un arrastre o una ventana en curso
         play("Pop" if self.paused else "Tink", self.cfg.sounds)
         print("Pausa" if self.paused else "Control reanudado", flush=True)
 
@@ -132,9 +178,7 @@ class App:
                     if action.kind == "pause":
                         self.toggle_pause()
                     elif not self.paused:
-                        execute(self.mouse, action)
-                        if action.kind == "click":
-                            play("Tink", self.cfg.sounds)
+                        self.apply(action)
 
                 if self.cfg.show_preview:
                     voice_state = self.voice.state if self.voice else ""
@@ -146,7 +190,7 @@ class App:
             pass
         finally:
             for action in self.controller.reset():
-                execute(self.mouse, action)
+                self.apply(action)
             cap.release()
             if self.cfg.show_preview:
                 cv2.destroyAllWindows()

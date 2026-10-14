@@ -201,6 +201,7 @@ class Actions:
         self.name = "Maki"
         self.on_cursor = None  # callback(accion, modo) -> dict, lo pone la app principal
         self.on_rename = None  # callback(nombre, frase) -> dict, lo pone el asistente de voz
+        self.on_gesture = None  # callback(gesto, accion, valor) -> dict, lo pone el asistente de voz
 
     def _record(self, name: str, **kw) -> dict:
         self.log.append((name, kw))
@@ -273,6 +274,11 @@ class Actions:
         if self.on_cursor is None:
             return {"ok": False, "error": "El control con cámara no está disponible en esta sesión."}
         return self.on_cursor(action, mode)
+
+    def assign_gesture(self, pose: str, action: str, value: str = "") -> dict:
+        if self.on_gesture is None:
+            return {"ok": False, "error": "No se pueden programar gestos en esta sesión."}
+        return self.on_gesture(pose, action, value)
 
     def rename(self, name: str, phrase: str = "") -> dict:
         name, phrase = " ".join(name.split()), " ".join(phrase.split())

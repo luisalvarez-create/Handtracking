@@ -23,17 +23,100 @@ NOSE_TIP = 1
 
 @dataclass
 class Action:
-    kind: str  # move | click | down | up | scroll | pause
+    # move | click | down | up | scroll | pause | window_grab | window_move | window_release | gesture
+    kind: str
     x: float = 0.0
     y: float = 0.0
     button: str = "left"
     amount: int = 0
+    value: str = ""  # para "gesture": "atajo:cmd+w", "orden:abre Chrome", "escuchar"
 
 
 @dataclass
 class HandObservation:
     landmarks: list[Landmark]
     handedness: str = "right"  # mano del usuario: left | right
+    gesture: str = ""  # postura reconocida por MediaPipe: puño | palma | paz | pulgar_arriba | pulgar_abajo | te_quiero
+    gesture_score: float = 0.0
+
+
+# --- Posturas de la mano y lo que hace cada una ------------------------------
+
+POSES = {
+    "puño": "Puño",
+    "palma": "Palma abierta",
+    "paz": "Paz (índice y medio)",
+    "pulgar_arriba": "Pulgar arriba",
+    "pulgar_abajo": "Pulgar abajo",
+    "te_quiero": "Te quiero (índice, meñique y pulgar)",
+}
+GESTURE_ACTIONS = {
+    "ninguna": "nada",
+    "mover_ventana": "mover la ventana",
+    "desplazar": "desplazar (subir o bajar la mano)",
+    "arrastrar": "arrastrar",
+    "clic": "clic",
+    "doble_clic": "doble clic",
+    "clic_derecho": "clic derecho",
+    "pausar_cursor": "pausar o reanudar el cursor",
+    "escuchar": "despertar al asistente",
+    "atajo": "atajo de teclado",
+    "orden": "orden al asistente",
+}
+CONTINUOUS = {"mover_ventana", "desplazar", "arrastrar"}  # duran mientras se mantiene la postura
+GESTURE_MIN_SCORE = 0.6
+
+
+def parse_binding(binding: str) -> tuple[str, str]:
+    """"atajo:cmd+w" → ("atajo", "cmd+w"); "desplazar" → ("desplazar", "")."""
+    action, _, value = (binding or "ninguna").partition(":")
+    return action.strip(), value.strip()
+
+
+def describe_bindings(bindings: dict[str, str]) -> str:
+    parts = []
+    for pose, label in POSES.items():
+        action, value = parse_binding(bindings.get(pose, "ninguna"))
+        if action == "ninguna":
+            continue
+        text = GESTURE_ACTIONS.get(action, action)
+        parts.append(f"{label} = {text}{f' «{value}»' if value else ''}")
+    return "; ".join(parts) or "ninguno"
+
+
+class PoseTracker:
+    """Una postura cuenta solo si se sostiene `hold` segundos; se suelta tras `release` segundos sin verla.
+
+    Así un puño a medias o un cuadro mal reconocido no dispara nada.
+    """
+
+    def __init__(self, hold: float = 0.35, release: float = 0.25):
+        self.hold, self.release = hold, release
+        self.stable = ""
+        self.candidate = ""
+        self.since = 0.0
+        self.lost_since: float | None = None
+
+    def reset(self) -> None:
+        self.stable = self.candidate = ""
+        self.lost_since = None
+
+    def update(self, pose: str, t: float) -> str:
+        if pose != self.candidate:
+            self.candidate, self.since = pose, t
+        if pose == self.stable:
+            self.lost_since = None
+            return self.stable
+        if self.stable:
+            # Mientras dura un gesto se toleran cuadros sueltos con otra postura.
+            if self.lost_since is None:
+                self.lost_since = t
+            if t - self.lost_since < self.release:
+                return self.stable
+            self.stable, self.lost_since = "", None
+        if pose and t - self.since >= self.hold:
+            self.stable = pose
+        return self.stable
 
 
 @dataclass
@@ -142,21 +225,135 @@ class HandController:
         self.pointer = Pointer(cfg, screen)
         self.dwell = DwellClicker(cfg.dwell_time, cfg.dwell_radius)
         self.pinch = {name: Hysteresis(cfg.pinch_on, cfg.pinch_off) for name in ("index", "middle", "ring")}
-        self.state = "idle"  # idle | pressing | dragging | scrolling | right
+        # idle | pressing | dragging | scrolling | right, o un gesto: g_window | g_scroll | g_drag | g_fired
+        self.state = "idle"
         self.anchor: Point = (0.0, 0.0)
         self.press_time = 0.0
         self.scroll_y = 0.0
         self.last_pos: Point | None = None
+        self.poses = PoseTracker(cfg.gesture_hold)
+        self.g_pose = ""
+        self.g_label = ""
+        self.g_y0 = 0.0
+        self.g_x0 = 0.0
+        self.g_t = 0.0
+        self.g_acc = 0.0
+        self.still_pos: Point | None = None
+        self.still_since = 0.0
 
     def reset(self) -> list[Action]:
-        actions = [Action("up", *self.anchor)] if self.state == "dragging" else []
+        actions = []
+        if self.state in ("dragging", "g_drag"):
+            actions.append(Action("up", *self.anchor))
+        elif self.state == "g_window":
+            actions.append(Action("window_release", *self.anchor))
         self.state = "idle"
         self.pointer.reset()
         self.dwell.reset()
+        self.poses.reset()
         for p in self.pinch.values():
             p.active = False
         self.last_pos = None
         return actions
+
+    # --- gestos con toda la mano -------------------------------------------
+
+    def _binding(self, pose: str) -> tuple[str, str]:
+        if not pose:
+            return "ninguna", ""
+        action, value = parse_binding(self.cfg.gestures.get(pose, "ninguna"))
+        return (action, value) if action in GESTURE_ACTIONS else ("ninguna", "")
+
+    def _still_for(self, pos: Point, t: float) -> float:
+        """Segundos que el cursor lleva casi quieto."""
+        if self.still_pos is None or math.dist(pos, self.still_pos) > self.cfg.dwell_radius:
+            self.still_pos, self.still_since = pos, t
+        return t - self.still_since
+
+    def _start_gesture(self, pose: str, action: str, value: str, pos: Point, hand: Point, t: float) -> list[Action]:
+        self.g_pose = pose
+        self.g_label = f"{POSES[pose].split(' (')[0]}: {GESTURE_ACTIONS[action].split(' (')[0]}"
+        self.anchor = pos
+        self.dwell.reset()
+        if action == "mover_ventana":
+            self.state = "g_window"
+            return [Action("window_grab", *pos)]
+        if action == "desplazar":
+            self.state, self.g_x0, self.g_y0, self.g_t, self.g_acc = "g_scroll", hand[0], hand[1], t, 0.0
+            return [Action("gesture_sound")]
+        if action == "arrastrar":
+            self.state = "g_drag"
+            return [Action("down", *pos)]
+        self.state = "g_fired"  # acción de una sola vez: no se repite hasta soltar la postura
+        if action == "clic":
+            return [Action("click", *pos)]
+        if action == "doble_clic":
+            return [Action("click", *pos), Action("click", *pos)]
+        if action == "clic_derecho":
+            return [Action("click", *pos, button="right")]
+        if action == "pausar_cursor":
+            return [Action("pause")]
+        return [Action("gesture", *pos, value=f"{action}:{value}" if value else action)]
+
+    def _continue_gesture(self, pos: Point, hand: Point, palm: float, t: float, status: Status) -> list[Action]:
+        status.gesture = self.g_label
+        if self.state == "g_window":
+            return [Action("window_move", *pos)]
+        if self.state == "g_drag":
+            return [Action("move", *pos)]
+        if self.state == "g_scroll":
+            # Como palanca: cuanto más se aleja la mano del punto inicial, más rápido desplaza.
+            if abs(hand[0] - self.g_x0) / max(palm, 1e-6) > 1.0:
+                # Mover la mano hacia un lado = quiere mover el cursor, no desplazar.
+                self.state = "idle"
+                self.still_pos = None
+                return [Action("move", *pos)]
+            status.pointer = self.anchor
+            offset = (hand[1] - self.g_y0) / max(palm, 1e-6)
+            strength = min(1.0, max(0.0, abs(offset) - self.cfg.palm_deadzone))
+            dt, self.g_t = max(0.0, t - self.g_t), t
+            self.g_acc += -math.copysign(1, offset) * strength * self.cfg.palm_scroll_speed * dt
+            lines = int(self.g_acc)
+            if lines:
+                self.g_acc -= lines
+                return [Action("scroll", *self.anchor, amount=lines)]
+            return []
+        return [Action("move", *pos)]  # g_fired: el cursor sigue normal
+
+    def _end_gesture(self, pos: Point) -> list[Action]:
+        state, self.state = self.state, "idle"
+        if state == "g_window":
+            return [Action("window_release", *pos)]
+        if state == "g_drag":
+            return [Action("up", *pos)]
+        return []
+
+    def _gestures(self, obs: HandObservation, pos: Point, palm: float, hand: Point, t: float, status: Status):
+        """Devuelve acciones si un gesto de mano toma el control en este cuadro; None si no."""
+        seen = obs.gesture if obs.gesture_score >= GESTURE_MIN_SCORE else ""
+        pose = self.poses.update(seen, t)
+        still = self._still_for(pos, t)
+        if self.state.startswith("g_"):
+            if pose == self.g_pose:
+                return self._continue_gesture(pos, hand, palm, t, status)
+            return self._end_gesture(pos) + [Action("move", *pos)]
+        if self.state not in ("idle", "pressing"):
+            return None
+        action, value = self._binding(pose)
+        if action == "desplazar" and still < self.cfg.palm_hold:
+            # La palma solo desplaza si se muestra quieta: al apuntar con la mano abierta no se activa.
+            action = "ninguna"
+        if action != "ninguna":
+            # Si un pellizco empezó al cerrar el puño, se cancela sin hacer clic.
+            actions = self._start_gesture(pose, action, value, pos, hand, t)
+            status.gesture = self.g_label
+            return actions
+        forming, _ = self._binding(seen)
+        if forming not in ("ninguna", "desplazar") and self.state == "pressing":
+            # Se está formando un gesto (por ejemplo, cerrando el puño): el pellizco espera, sin clic.
+            status.pointer = self.anchor
+            return []
+        return None
 
     @staticmethod
     def features(lm: list[Landmark]) -> tuple[Point, dict[str, float]]:
@@ -178,6 +375,11 @@ class HandController:
         pos = self.pointer.update(nx, ny, t)
         status = Status("", pos)
         actions: list[Action] = []
+
+        palm = _dist(obs.landmarks[WRIST], obs.landmarks[MIDDLE_MCP])
+        gesture_actions = self._gestures(obs, pos, palm, center, t, status)
+        if gesture_actions is not None:
+            return gesture_actions, status
 
         if self.click_mode == "dwell":
             actions.append(Action("move", *pos))

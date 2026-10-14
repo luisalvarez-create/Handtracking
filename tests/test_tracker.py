@@ -17,6 +17,9 @@ from sofia.preview import draw  # noqa: E402
 IMAGES = {
     "hand": "https://storage.googleapis.com/mediapipe-tasks/hand_landmarker/woman_hands.jpg",
     "face": "https://storage.googleapis.com/mediapipe-assets/business-person.png",
+    "thumbs_up": "https://storage.googleapis.com/mediapipe-tasks/gesture_recognizer/thumbs_up.jpg",
+    "victory": "https://storage.googleapis.com/mediapipe-tasks/gesture_recognizer/victory.jpg",
+    "pointing_up": "https://storage.googleapis.com/mediapipe-tasks/gesture_recognizer/pointing_up.jpg",
 }
 
 
@@ -36,6 +39,22 @@ def assets(tmp_path_factory):
     except Exception as exc:  # sin red o sin bibliotecas gráficas
         pytest.skip(f"no se pudieron preparar los recursos: {exc}")
     return d, imgs
+
+
+@pytest.mark.parametrize("image, expected", [("thumbs_up", "pulgar_arriba"), ("victory", "paz"), ("pointing_up", "")])
+def test_hand_gestures_from_real_photos(assets, image, expected):
+    from sofia.tracker import Tracker
+
+    model_dir, imgs = assets
+    tracker = Tracker("hand", model_dir=model_dir)
+    try:
+        obs = None
+        for _ in range(3):
+            obs = tracker.process(imgs[image])
+        assert obs is not None and len(obs.landmarks) == 21
+        assert obs.gesture == expected  # señalar es la mano normal al apuntar: no cuenta como gesto
+    finally:
+        tracker.close()
 
 
 def test_hand_tracker_end_to_end(assets):
@@ -108,7 +127,7 @@ def test_app_loop_moves_mouse(assets, monkeypatch, tmp_path):
 
     model_dir, imgs = assets
     monkeypatch.setattr(tracker_mod, "config_dir", lambda: model_dir.parent / model_dir.name.replace("assets", "cfg"))
-    monkeypatch.setattr(tracker_mod, "ensure_model", lambda kind, d=None: model_dir / f"{kind}_landmarker.task")
+    monkeypatch.setattr(tracker_mod, "ensure_model", lambda kind, d=None: model_dir / tracker_mod.MODEL_URLS[kind].rsplit("/", 1)[-1])
     mouse = FakeMouse()
     monkeypatch.setattr(app_mod, "create_mouse", lambda: mouse)
     monkeypatch.setattr(app_mod, "open_camera", lambda i: FakeCamera([imgs["hand"]] * 5))

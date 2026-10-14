@@ -55,6 +55,13 @@ class Config:
     drag_after: float = 0.7  # segundos de pellizco sostenido para arrastrar
     scroll_step: float = 25.0  # píxeles de movimiento por línea de desplazamiento
 
+    # Gestos con toda la mano: postura → acción ("ninguna", "mover_ventana", "desplazar", "atajo:cmd+w", "orden:abre Chrome"…).
+    gestures: dict[str, str] = field(default_factory=lambda: {"puño": "mover_ventana", "palma": "desplazar"})
+    gesture_hold: float = 0.35  # segundos sosteniendo la postura para que cuente
+    palm_hold: float = 0.6  # segundos con la palma quieta para empezar a desplazar
+    palm_scroll_speed: float = 25.0  # líneas por segundo con la mano lejos del punto inicial
+    palm_deadzone: float = 0.25  # cuánto mover la mano (en tamaños de palma) antes de desplazar
+
     show_preview: bool = True
     sounds: bool = True
 

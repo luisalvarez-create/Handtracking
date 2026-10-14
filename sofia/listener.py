@@ -170,10 +170,15 @@ class VoiceListener(threading.Thread):
         self.idle_text = idle_text  # por ejemplo «Di "hola Maki"»
         self.audio: queue.Queue[bytes] = queue.Queue()
         self.stop_event = threading.Event()
+        self.wake_event = threading.Event()  # despertar sin decir la frase (por ejemplo, con un gesto)
         self.error: str = ""
 
     def stop(self) -> None:
         self.stop_event.set()
+
+    def wake(self) -> None:
+        """Como si se hubiera dicho solo la frase de activación: responde "¿Sí?" y escucha."""
+        self.wake_event.set()
 
     def _callback(self, indata, frames, time_info, status) -> None:
         self.audio.put(bytes(indata))
@@ -220,6 +225,21 @@ class VoiceListener(threading.Thread):
             self.on_state(self.idle_text)
             print(f"🎙️  Escuchando. {self.idle_text} y tu orden.", flush=True)
             while not self.stop_event.is_set():
+                if self.wake_event.is_set():
+                    self.wake_event.clear()
+                    stream.stop()
+                    try:
+                        self.on_ack()
+                        self.logic.expect_reply(time.monotonic())
+                    finally:
+                        self._drain()
+                        rec.Reset()
+                        buf.clear()
+                        fed = buf_start = 0
+                        if not self.stop_event.is_set():
+                            stream.start()
+                        self.on_state("Te escucho…")
+                    continue
                 try:
                     block = self.audio.get(timeout=0.3)
                 except queue.Empty:

@@ -1,4 +1,8 @@
-"""Detección de mano o cara con MediaPipe Tasks (HandLandmarker / FaceLandmarker)."""
+"""Detección de mano o cara con MediaPipe Tasks.
+
+La mano usa Gesture Recognizer: da los 21 puntos de la mano (igual que Hand
+Landmarker) y además reconoce posturas entrenadas (puño, palma, paz…).
+"""
 from __future__ import annotations
 
 import ssl
@@ -15,15 +19,24 @@ from .config import config_dir
 from .gestures import FaceObservation, HandObservation
 
 MODEL_URLS = {
-    "hand": "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+    "hand": "https://storage.googleapis.com/mediapipe-models/gesture_recognizer/gesture_recognizer/float16/1/gesture_recognizer.task",
     "face": "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+}
+# Nombres de MediaPipe → posturas de Sofía ("Pointing_Up" se ignora: es la mano normal al apuntar).
+GESTURE_NAMES = {
+    "Closed_Fist": "puño",
+    "Open_Palm": "palma",
+    "Victory": "paz",
+    "Thumb_Up": "pulgar_arriba",
+    "Thumb_Down": "pulgar_abajo",
+    "ILoveYou": "te_quiero",
 }
 
 
 def ensure_model(kind: str, directory: Path | None = None) -> Path:
     """Descarga el modelo la primera vez y lo guarda para usarlo sin internet."""
     directory = directory or config_dir() / "models"
-    path = directory / f"{kind}_landmarker.task"
+    path = directory / MODEL_URLS[kind].rsplit("/", 1)[-1]
     if path.exists() and path.stat().st_size > 0:
         return path
     directory.mkdir(parents=True, exist_ok=True)
@@ -50,7 +63,7 @@ class Tracker:
         self._last_ts = -1
         model = str(ensure_model(kind, model_dir))
         if kind == "hand":
-            options = vision.HandLandmarkerOptions(
+            options = vision.GestureRecognizerOptions(
                 base_options=BaseOptions(model_asset_path=model),
                 running_mode=vision.RunningMode.VIDEO,
                 num_hands=1 if hand_preference == "any" else 2,
@@ -58,7 +71,7 @@ class Tracker:
                 min_hand_presence_confidence=0.5,
                 min_tracking_confidence=0.5,
             )
-            self._landmarker = vision.HandLandmarker.create_from_options(options)
+            self._landmarker = vision.GestureRecognizer.create_from_options(options)
         else:
             options = vision.FaceLandmarkerOptions(
                 base_options=BaseOptions(model_asset_path=model),
@@ -79,7 +92,10 @@ class Tracker:
     def process(self, frame_bgr) -> HandObservation | FaceObservation | None:
         rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
         image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb)
-        result = self._landmarker.detect_for_video(image, self._timestamp())
+        if self.kind == "hand":
+            result = self._landmarker.recognize_for_video(image, self._timestamp())
+        else:
+            result = self._landmarker.detect_for_video(image, self._timestamp())
         obs = self._hand(result) if self.kind == "hand" else self._face(result)
         self.last_landmarks = obs.landmarks if obs else None
         return obs
@@ -90,7 +106,11 @@ class Tracker:
             label = result.handedness[i][0].category_name if result.handedness and result.handedness[i] else "Right"
             # MediaPipe asume imagen en espejo; la cámara la entrega sin espejo, así que se invierte.
             handedness = "right" if label == "Left" else "left"
-            candidates.append(HandObservation([(p.x, p.y, p.z) for p in lms], handedness))
+            gesture, score = "", 0.0
+            if getattr(result, "gestures", None) and i < len(result.gestures) and result.gestures[i]:
+                top = result.gestures[i][0]
+                gesture, score = GESTURE_NAMES.get(top.category_name, ""), float(top.score)
+            candidates.append(HandObservation([(p.x, p.y, p.z) for p in lms], handedness, gesture, score))
         if self.hand_preference != "any":
             candidates = [c for c in candidates if c.handedness == self.hand_preference]
         return candidates[0] if candidates else None

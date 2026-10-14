@@ -5,7 +5,9 @@ import threading
 
 from .actions import Actions, create_actions
 from .assistant import Assistant, friendly_error, load_api_key
+from .actions import parse_shortcut
 from .config import Config
+from .gestures import GESTURE_ACTIONS, POSES, describe_bindings
 from .listener import VoiceListener, WakeLogic
 
 NO_KEY = (
@@ -26,6 +28,8 @@ class VoiceAssistant:
         self.assistant = Assistant(self.actions, key, cfg.gemini_model, client=client, name=cfg.assistant_name, wake=self.wake_text())
         self.actions.name = cfg.assistant_name
         self.actions.on_rename = self.rename
+        self.actions.on_gesture = self.assign_gesture
+        self.assistant.gestures_text = lambda: describe_bindings(self.cfg.gestures)
         self.state = "Preparando la voz…"
         self.logic = WakeLogic(cfg.wake_words, cfg.wake_confidence, cfg.followup_seconds, cfg.wake_similarity)
         self.listener: VoiceListener | None = None
@@ -48,6 +52,25 @@ class VoiceAssistant:
         if self.listener:
             self.listener.idle_text = self.idle_text()
         return {"ok": True, "nombre": name, "frase_activacion": phrase}
+
+    def assign_gesture(self, pose: str, action: str, value: str = "") -> dict:
+        """Programa un gesto de la mano. El control con cámara lo usa al instante (lee la misma configuración)."""
+        value = " ".join(value.split())
+        if pose not in POSES:
+            return {"ok": False, "error": f"Gesto desconocido. Usa: {', '.join(POSES)}."}
+        if action not in GESTURE_ACTIONS:
+            return {"ok": False, "error": f"Acción desconocida. Usa: {', '.join(GESTURE_ACTIONS)}."}
+        if action == "atajo":
+            try:
+                parse_shortcut(value)
+            except ValueError as e:
+                return {"ok": False, "error": f"Atajo no válido: {e}"}
+        if action == "orden" and not 0 < len(value) <= 200:
+            return {"ok": False, "error": "Falta la orden (máximo 200 letras)."}
+        binding = f"{action}:{value}" if action in ("atajo", "orden") else action
+        self.cfg.gestures = {**self.cfg.gestures, pose: binding}
+        self.cfg.save()
+        return {"ok": True, "gesto": POSES[pose], "accion": GESTURE_ACTIONS[action], "valor": value}
 
     def alive(self) -> bool:
         return self.listener is not None and self.listener.is_alive()

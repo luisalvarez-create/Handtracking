@@ -30,6 +30,8 @@ Cómo trabajar:
 - Si te piden redactar algo (una carta, un correo, una nota), escríbelo tú completo, bien redactado, con saludo y despedida, y pégalo con escribir_texto. Si falta un dato indispensable (por ejemplo a quién va dirigida la carta), pregunta primero con una sola pregunta corta.
 - Si piden abrir, activar o encender el control con la mano, el hand tracking o el cursor con la cámara, usa control_cursor con accion "iniciar" (modo "mano", o "cabeza" si lo piden con la cabeza). Para apagarlo usa "detener"; para dejarlo quieto un momento, "pausar" y "reanudar".
 - Si piden que cambies de nombre o de frase de activación, usa cambiar_nombre.
+- La persona también hace gestos con toda la mano frente a la cámara: puño, palma (abierta), paz, pulgar_arriba, pulgar_abajo y te_quiero (índice, meñique y pulgar). Si pide que un gesto haga algo, usa asignar_gesto. Para un atajo (cerrar ventana, pestaña nueva, copiar…) usa la acción "atajo" con el atajo en valor; para algo que harías tú (abrir una app, buscar, escribir algo) usa "orden" con la orden en palabras; "escuchar" la despierta sin decir la frase; "ninguna" quita el gesto. Si preguntan qué gestos hay, explícalos con la lista de abajo.
+- Gestos configurados ahora: {gestures}.
 - Atajos útiles: cerrar ventana "cmd+w", pestaña nueva "cmd+t", salir de una app "cmd+q", deshacer "cmd+z", guardar "cmd+s", buscar en la página "cmd+f", recargar "cmd+r", copiar "cmd+c", pegar "cmd+v", seleccionar todo "cmd+a".
 - Nunca envíes mensajes o correos, compres, pagues ni borres archivos sin que la persona lo confirme en ese momento. Pregunta "¿Lo envío?" antes de presionar enviar.
 - Si el audio no es una orden para ti (ruido, una conversación con otra persona) o no se entiende, no uses funciones y responde exactamente: (nada)
@@ -124,6 +126,21 @@ TOOLS = [
         ),
     },
     {
+        "name": "asignar_gesto",
+        "description": "Asigna lo que hace un gesto de la mano frente a la cámara (se guarda).",
+        "parameters": _schema(
+            {
+                "gesto": {"type": "string", "enum": ["puño", "palma", "paz", "pulgar_arriba", "pulgar_abajo", "te_quiero"]},
+                "accion": {
+                    "type": "string",
+                    "enum": ["ninguna", "mover_ventana", "desplazar", "arrastrar", "clic", "doble_clic", "clic_derecho", "pausar_cursor", "escuchar", "atajo", "orden"],
+                },
+                "valor": {"type": "string", "description": "Para atajo: el atajo (cmd+w). Para orden: la orden en palabras (abre Chrome)."},
+            },
+            ["gesto", "accion"],
+        ),
+    },
+    {
         "name": "esperar",
         "description": "Espera unos segundos (máximo 5), por ejemplo a que cargue una app.",
         "parameters": _schema({"segundos": {"type": "number"}}, ["segundos"]),
@@ -151,6 +168,8 @@ def run_tool(actions: Actions, name: str, args: dict) -> dict:
             return actions.set_volume(str(a.get("nivel", "")))
         if name == "control_cursor":
             return actions.cursor(str(a.get("accion", "")), str(a.get("modo") or ""))
+        if name == "asignar_gesto":
+            return actions.assign_gesture(str(a.get("gesto", "")), str(a.get("accion", "")), str(a.get("valor") or ""))
         if name == "cambiar_nombre":
             return actions.rename(str(a.get("nombre", "")), str(a.get("frase_activacion") or ""))
         if name == "esperar":
@@ -211,6 +230,7 @@ class Assistant:
         self.types = types
         self.name = name
         self.wake = wake
+        self.gestures_text = lambda: "puño = mover la ventana; palma abierta = desplazar"  # lo reemplaza VoiceAssistant
         self.actions = actions
         self.model = model or DEFAULT_MODEL
         if client is None:
@@ -223,7 +243,7 @@ class Assistant:
     def _config(self):
         t = self.types
         apps = ", ".join(self.actions.apps()[:120])
-        system = SYSTEM.format(name=self.name, wake=self.wake) + f"\n\nFecha y hora actual: {now_text()}.\nApps instaladas: {apps}."
+        system = SYSTEM.format(name=self.name, wake=self.wake, gestures=self.gestures_text()) + f"\n\nFecha y hora actual: {now_text()}.\nApps instaladas: {apps}."
         return t.GenerateContentConfig(
             system_instruction=system,
             tools=[t.Tool(function_declarations=[

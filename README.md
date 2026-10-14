@@ -19,6 +19,26 @@ Plataforma principal: **macOS** (Mac con chip Apple o Intel). El código tambié
 - Después de un clic por permanencia hay que mover el cursor para que vuelva a contar, así no se repiten clics si la persona se queda quieta.
 - Si la mano o la cara salen de la cámara, el cursor se detiene y se suelta cualquier arrastre.
 
+### Gestos con toda la mano
+
+Además de los pellizcos, Sofía reconoce **posturas de toda la mano** (con el reconocedor de gestos de MediaPipe). Funcionan en los modos *pellizco* y *permanencia*:
+
+| Gesto | Qué hace (predeterminado) |
+| --- | --- |
+| ✊ **Puño** | **Mover la ventana** que está bajo el cursor: cierra el puño, mueve la mano y ábrela para soltar. La agarra desde cualquier parte, no solo desde la barra de título |
+| 🖐️ **Palma abierta, quieta 0.6 s** y luego subir o bajar la mano | **Desplazar**, como palanca: mientras más lejos del punto donde empezaste, más rápido. Para salir, cierra la mano o muévela hacia un lado |
+| ✌️ **Paz** · 👍 **Pulgar arriba** · 👎 **Pulgar abajo** · 🤟 **Te quiero** | Libres: asígnales lo que quieras |
+
+- Un gesto cuenta cuando se sostiene un momento (0.35 s), así un movimiento a medias no hace nada. Al empezar a mover una ventana o a desplazar suena un "pop".
+- La palma solo desplaza si se muestra **quieta**: si apuntas con la mano abierta mientras la mueves, no pasa nada.
+- **Se programan por voz**, por ejemplo:
+  - *"Hola Maki, cuando haga la señal de paz, cierra la ventana"* (atajo `cmd+w`)
+  - *"Hola Maki, cuando levante el pulgar, abre Chrome"* (una orden completa para Maki)
+  - *"Hola Maki, con el pulgar abajo haz doble clic"*
+  - *"Hola Maki, que el gesto de te quiero te despierte"* (sin decir "Hola Maki")
+  - *"Hola Maki, quita el gesto de la palma"* · *"¿qué gestos tengo?"*
+- Acciones posibles: mover ventana, desplazar, arrastrar, clic, doble clic, clic derecho, pausar el cursor, despertar a Maki, un atajo de teclado o una orden para Maki. Se guardan para la próxima vez.
+
 ### Teclas (en la ventana de vista previa, para el terapeuta o cuidador)
 
 | Tecla | Acción |
@@ -120,6 +140,9 @@ La configuración se guarda en `~/Library/Application Support/Sofia/config.json`
 | `dwell_time`, `dwell_radius` | Tiempo (s) y radio (px) del clic por permanencia |
 | `pinch_on`, `pinch_off` | Sensibilidad del pellizco |
 | `mouth_open` | Qué tan abierta debe estar la boca para el clic |
+| `gestures` | Qué hace cada gesto, por ejemplo `{"puño": "mover_ventana", "palma": "desplazar", "paz": "atajo:cmd+w", "pulgar_arriba": "orden:abre Chrome"}` (más fácil pedirlo por voz) |
+| `gesture_hold` | Segundos sosteniendo un gesto para que cuente |
+| `palm_hold`, `palm_scroll_speed`, `palm_deadzone` | Palma: segundos quieta para empezar, velocidad máxima (líneas por segundo) y cuánto mover la mano antes de desplazar |
 | `voice` | `false` para apagar el asistente de voz |
 | `gemini_model` | Modelo de Gemini (`gemini-3.5-flash-lite`; uno más capaz, por ejemplo `gemini-3.8-flash`, cuesta más) |
 | `assistant_name`, `wake_words` | Nombre (`Maki`) y frase de activación (`["hola maki"]`) |
@@ -135,14 +158,15 @@ pip install -r requirements.txt pytest
 python -m pytest
 ```
 
-Las pruebas de `tests/test_logic.py`, `tests/test_mouse.py` y `tests/test_voice.py` no necesitan cámara, micrófono ni internet (Gemini se simula). `tests/test_tracker.py` usa MediaPipe real con fotos de muestra (necesita internet la primera vez).
+Las pruebas de `tests/test_logic.py`, `tests/test_mouse.py`, `tests/test_voice.py` y `tests/test_hand_gestures.py` no necesitan cámara, micrófono ni internet (Gemini y la API de Accesibilidad se simulan). `tests/test_tracker.py` usa MediaPipe real con fotos de muestra, incluidos gestos (necesita internet la primera vez).
 
 ```
 sofia/
   __main__.py   Línea de comandos (python -m sofia)
   app.py        Bucle principal: cámara → MediaPipe → gestos → ratón
-  tracker.py    MediaPipe Hand/Face Landmarker y descarga de modelos
-  gestures.py   Lógica de gestos: pellizco, permanencia, cabeza, boca (sin dependencias de hardware)
+  tracker.py    MediaPipe Gesture Recognizer (mano y gestos) / Face Landmarker y descarga de modelos
+  gestures.py   Lógica de gestos: pellizco, permanencia, cabeza, boca y gestos con toda la mano (sin hardware)
+  windows.py    Mover la ventana bajo el cursor (API de Accesibilidad de macOS; arrastre como respaldo)
   filters.py    Filtro One Euro para suavizar el cursor
   mouse.py      Ratón: Quartz en macOS (doble clic correcto), pynput en otros sistemas
   preview.py    Ventana de vista previa
